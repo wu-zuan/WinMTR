@@ -1,0 +1,69 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build WinMTR x64 and publish release
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install vcpkg dependencies
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          if (-not (Test-Path -LiteralPath $vcpkg)) { throw "vcpkg was not found on the GitHub runner." }
+          & $vcpkg integrate install
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed." }
+          & $vcpkg install --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency installation failed." }
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          msbuild WinMTR.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:VcpkgTriplet=x64-windows /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw "Release x64 build failed." }
+
+      - name: Verify release executable
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path "Release_x64/WinMTR.exe" -ErrorAction Stop
+          $file = Get-Item -LiteralPath $exe
+          if ($file.Length -eq 0) { throw "WinMTR.exe is empty." }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $exe
+
+      - name: Create GitHub Release and upload WinMTR.exe
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $asset = "Release_x64/WinMTR.exe"
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
+          }
+          else {
+            gh release create $tag $asset --verify-tag --generate-notes --title $tag --repo $env:GITHUB_REPOSITORY
+          }
+
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publication failed." }

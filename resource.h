@@ -58,6 +58,21 @@
 #define IDC_INFO_HOSTNAME               1036
 #define IDC_INFO_ISP                    1037
 #define ID_NETWORK_DETAILS              1038
+#define IDC_EDIT_MAX_HOPS               1039
+#define IDC_EDIT_MAX_PATHS              1040
+#define IDC_CHECK_AUTO_HEIGHT           1041
+#define IDC_CHECK_SHOW_IP               1042
+#define IDC_CHECK_NETWORK_INFO          1043
+#define IDC_MFCLINK_UPSTREAM            1044
+#define IDC_LICENSE_HEADER              1045
+#define IDC_LICENSE_HEADER_TITLE        1046
+#define IDC_LICENSE_HEADER_SUBTITLE     1047
+#define IDC_LICENSE_INTRO               1048
+#define IDC_LICENSE_PROJECT_CAPTION     1049
+#define IDC_LICENSE_UPSTREAM_CAPTION    1050
+#define IDC_LICENSE_FOOTER              1051
+#define IDC_LICENSE_PROJECT_CARD        1052
+#define IDC_LICENSE_UPSTREAM_CARD       1053
 
 // Next default values for new objects
 // 
@@ -65,7 +80,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        138
 #define _APS_NEXT_COMMAND_VALUE         32771
-#define _APS_NEXT_CONTROL_VALUE         1039
+#define _APS_NEXT_CONTROL_VALUE         1054
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

@@ -381,7 +381,7 @@
     <Link>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <SubSystem>Windows</SubSystem>
-      <OutputFile>.\$(Configuration)_$(PlatformTarget)\WinMTR.exe</OutputFile>
+      <OutputFile>.\$(Configuration)_$(PlatformTarget)\WinMTR$(BuildOutputSuffix).exe</OutputFile>
       <AdditionalDependencies>onecore.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LargeAddressAware>true</LargeAddressAware>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>

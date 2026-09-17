@@ -71,22 +71,26 @@ std::vector<std::vector<s_nethost>> WinMTRNet::getCurrentRoutes() const
 int WinMTRNet::GetMax() const
 {
 	std::unique_lock lock(ghMutex);
-	int max = MAX_HOPS;
+	const int configuredMax = std::clamp(static_cast<int>(options->getMaxHops()), 1, MAX_HOPS);
+	int max = configuredMax;
+	bool targetFound = false;
 
 	// first match: traced address responds on ping requests, and the address is in the hosts list
 	for (int i = 1; const auto & h : host) {
+		if (i > configuredMax) break;
 		const auto& paths = routes[i - 1];
 		if (h.addr == last_remote_addr || std::ranges::any_of(paths, [this](const s_nethost& path) {
 			return path.addr == last_remote_addr;
 		})) {
 			max = i;
+			targetFound = true;
 			break;
 		}
 		++i;
 	}
 
 	// second match:  traced address doesn't responds on ping requests
-	if (max == MAX_HOPS) {
+	if (!targetFound) {
 		while ((max > 1) && (host[max - 1].addr == host[max - 2].addr && isValidAddress(host[max - 1].addr))) max--;
 	}
 	return max;

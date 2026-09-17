@@ -30,6 +30,7 @@ module;
 #pragma warning (disable : 4005)
 #include "targetver.h"
 #include <afxext.h>
+#include <shellapi.h>
 #include "resource.h"
 export module WinMTR.License;
 #ifdef _DEBUG
@@ -381,6 +382,72 @@ consider it more useful to permit linking proprietary applications with the\r\n\
 library.  If this is what you want to do, use the GNU Library General\r\n\
 Public License instead of this License."};
 
+class GitHubLinkButton : public CButton
+{
+public:
+	void SetURL(const wchar_t* url) { m_url = url; }
+
+protected:
+	CString m_url;
+	bool m_hover = false;
+
+	virtual void DrawItem(LPDRAWITEMSTRUCT item) override
+	{
+		CDC* dc = CDC::FromHandle(item->hDC);
+		const CRect rect(item->rcItem);
+		const auto background = m_hover ? RGB(246, 248, 250) : RGB(255, 255, 255);
+		dc->FillSolidRect(rect, background);
+		dc->SetBkMode(TRANSPARENT);
+		dc->SetTextColor(RGB(9, 105, 218));
+		CFont* oldFont = dc->SelectObject(GetFont());
+		CString text;
+		GetWindowText(text);
+		CRect textRect(rect);
+		dc->DrawText(text, textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+		dc->SelectObject(oldFont);
+		if ((item->itemState & ODS_FOCUS) != 0) {
+			CRect focusRect(rect);
+			focusRect.DeflateRect(1, 1);
+			dc->DrawFocusRect(focusRect);
+		}
+	}
+
+	afx_msg void OnMouseMove(UINT flags, CPoint point)
+	{
+		if (!m_hover) {
+			m_hover = true;
+			TRACKMOUSEEVENT tracking{ sizeof(TRACKMOUSEEVENT), TME_LEAVE, GetSafeHwnd(), 0 };
+			TrackMouseEvent(&tracking);
+			Invalidate();
+		}
+		CButton::OnMouseMove(flags, point);
+	}
+	afx_msg LRESULT OnMouseLeave(WPARAM, LPARAM)
+	{
+		m_hover = false;
+		Invalidate();
+		return 0;
+	}
+	afx_msg BOOL OnSetCursor(CWnd*, UINT, UINT)
+	{
+		::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+		return TRUE;
+	}
+	afx_msg void OnClicked()
+	{
+		if (!m_url.IsEmpty())
+			ShellExecuteW(GetSafeHwnd(), L"open", m_url, nullptr, nullptr, SW_SHOWNORMAL);
+	}
+	DECLARE_MESSAGE_MAP()
+};
+
+BEGIN_MESSAGE_MAP(GitHubLinkButton, CButton)
+	ON_WM_MOUSEMOVE()
+	ON_MESSAGE(WM_MOUSELEAVE, OnMouseLeave)
+	ON_WM_SETCURSOR()
+	ON_CONTROL_REFLECT(BN_CLICKED, OnClicked)
+END_MESSAGE_MAP()
+
 export class WinMTRLicense : public CDialog
 {
 public:
@@ -388,11 +455,23 @@ public:
 
 
     enum { IDD = IDD_DIALOG_LICENSE };
+	GitHubLinkButton m_projectLink;
+	GitHubLinkButton m_upstreamLink;
+	CFont m_headerFont;
+	CFont m_headerSubtitleFont;
+	CFont m_captionFont;
+	CFont m_linkFont;
+	CBrush m_backgroundBrush;
+	CBrush m_headerBrush;
+	CBrush m_cardBrush;
 
 protected:
     virtual void DoDataExchange(CDataExchange* pDX);
 
-    virtual BOOL OnInitDialog();
+	virtual BOOL OnInitDialog();
+	afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
+	afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT item);
+	void ApplyLightTheme();
 
     DECLARE_MESSAGE_MAP()
 };
@@ -405,6 +484,8 @@ module : private;
 // 
 //*****************************************************************************
 BEGIN_MESSAGE_MAP(WinMTRLicense, CDialog)
+	ON_WM_CTLCOLOR()
+	ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
 
@@ -426,6 +507,8 @@ WinMTRLicense::WinMTRLicense(CWnd* pParent) : CDialog(WinMTRLicense::IDD, pParen
 void WinMTRLicense::DoDataExchange(CDataExchange* pDX)
 {
 	CDialog::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_MFCLINK1, m_projectLink);
+	DDX_Control(pDX, IDC_MFCLINK_UPSTREAM, m_upstreamLink);
 }
 
 
@@ -437,6 +520,31 @@ void WinMTRLicense::DoDataExchange(CDataExchange* pDX)
 BOOL WinMTRLicense::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
+	m_projectLink.SetURL(L"https://github.com/wu-zuan/winmtr");
+	m_upstreamLink.SetURL(L"https://github.com/leeter/WinMTR-refresh");
+
+	LOGFONT font{};
+	GetFont()->GetLogFont(&font);
+	font.lfWeight = FW_SEMIBOLD;
+	font.lfHeight = -18;
+	m_headerFont.CreateFontIndirect(&font);
+	font.lfWeight = FW_NORMAL;
+	font.lfHeight = -12;
+	m_headerSubtitleFont.CreateFontIndirect(&font);
+	font.lfWeight = FW_SEMIBOLD;
+	font.lfHeight = -13;
+	m_captionFont.CreateFontIndirect(&font);
+	font.lfWeight = FW_NORMAL;
+	font.lfHeight = -13;
+	m_linkFont.CreateFontIndirect(&font);
+
+	GetDlgItem(IDC_LICENSE_HEADER_TITLE)->SetFont(&m_headerFont);
+	GetDlgItem(IDC_LICENSE_HEADER_SUBTITLE)->SetFont(&m_headerSubtitleFont);
+	GetDlgItem(IDC_LICENSE_PROJECT_CAPTION)->SetFont(&m_captionFont);
+	GetDlgItem(IDC_LICENSE_UPSTREAM_CAPTION)->SetFont(&m_captionFont);
+	m_projectLink.SetFont(&m_linkFont);
+	m_upstreamLink.SetFont(&m_linkFont);
+	ApplyLightTheme();
 	/*
 	m_editLicense.SetSel(-1, -1);
 	m_editLicense.ReplaceSel(LICENCE_TEXT_1);
@@ -444,5 +552,77 @@ BOOL WinMTRLicense::OnInitDialog()
 	m_editLicense.ReplaceSel(LICENCE_TEXT_2);
 	*/
 	return FALSE;
+}
+
+HBRUSH WinMTRLicense::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+{
+	const auto controlId = pWnd == nullptr ? 0 : pWnd->GetDlgCtrlID();
+	if (nCtlColor == CTLCOLOR_DLG) {
+		return static_cast<HBRUSH>(m_backgroundBrush.GetSafeHandle());
+	}
+	if (controlId == IDC_LICENSE_HEADER ||
+		controlId == IDC_LICENSE_HEADER_TITLE ||
+		controlId == IDC_LICENSE_HEADER_SUBTITLE) {
+		pDC->SetBkColor(RGB(36, 41, 47));
+		pDC->SetTextColor(controlId == IDC_LICENSE_HEADER_SUBTITLE
+			? RGB(139, 148, 158)
+			: RGB(240, 246, 252));
+		return static_cast<HBRUSH>(m_headerBrush.GetSafeHandle());
+	}
+	if (nCtlColor == CTLCOLOR_STATIC) {
+		const bool cardText = controlId == IDC_LICENSE_PROJECT_CAPTION ||
+			controlId == IDC_LICENSE_UPSTREAM_CAPTION;
+		pDC->SetBkColor(RGB(255, 255, 255));
+		pDC->SetTextColor(controlId == IDC_LICENSE_INTRO || controlId == IDC_LICENSE_FOOTER
+			? RGB(87, 96, 106)
+			: RGB(31, 35, 40));
+		return static_cast<HBRUSH>((cardText ? m_cardBrush : m_backgroundBrush).GetSafeHandle());
+	}
+	return CDialog::OnCtlColor(pDC, pWnd, nCtlColor);
+}
+
+void WinMTRLicense::ApplyLightTheme()
+{
+	if (m_backgroundBrush.GetSafeHandle()) m_backgroundBrush.DeleteObject();
+	if (m_headerBrush.GetSafeHandle()) m_headerBrush.DeleteObject();
+	if (m_cardBrush.GetSafeHandle()) m_cardBrush.DeleteObject();
+	m_backgroundBrush.CreateSolidBrush(RGB(255, 255, 255));
+	m_headerBrush.CreateSolidBrush(RGB(36, 41, 47));
+	m_cardBrush.CreateSolidBrush(RGB(255, 255, 255));
+	RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+void WinMTRLicense::OnDrawItem(int controlId, LPDRAWITEMSTRUCT item)
+{
+	if (controlId == IDC_LICENSE_PROJECT_CARD || controlId == IDC_LICENSE_UPSTREAM_CARD) {
+		CDC* dc = CDC::FromHandle(item->hDC);
+		const CRect rect(item->rcItem);
+		dc->FillSolidRect(rect, RGB(255, 255, 255));
+		CPen border(PS_SOLID, 1, RGB(208, 215, 222));
+		CPen* oldPen = dc->SelectObject(&border);
+		dc->SelectStockObject(NULL_BRUSH);
+		dc->Rectangle(rect);
+		dc->SelectObject(oldPen);
+		return;
+	}
+	if (controlId == IDOK) {
+		CDC* dc = CDC::FromHandle(item->hDC);
+		CRect rect(item->rcItem);
+		const bool pressed = (item->itemState & ODS_SELECTED) != 0;
+		const auto face = pressed ? RGB(208, 215, 222) : RGB(246, 248, 250);
+		dc->FillSolidRect(rect, face);
+		CPen border(PS_SOLID, 1, RGB(208, 215, 222));
+		CPen* oldPen = dc->SelectObject(&border);
+		dc->SelectStockObject(NULL_BRUSH);
+		dc->Rectangle(rect);
+		dc->SelectObject(oldPen);
+		dc->SetBkMode(TRANSPARENT);
+		dc->SetTextColor(RGB(31, 35, 40));
+		CString text;
+		GetDlgItem(IDOK)->GetWindowText(text);
+		dc->DrawText(text, rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		return;
+	}
+	CDialog::OnDrawItem(controlId, item);
 }
 

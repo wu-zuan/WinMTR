@@ -123,6 +123,11 @@ private:
 	bool				useIPv4 = true;
 	bool				useIPv6 = true;
 	std::atomic_bool	tracing;
+	std::atomic_uint	maxHops = 30;
+	unsigned			maxDisplayPaths = 8;
+	bool				autoResizeHeight = true;
+	bool				showIpWithHostname = false;
+	bool				networkInfoEnabled = true;
 	int				m_lastAutoSizeRowCount = -1;
 	int				m_pendingAutoSizeRowCount = -1;
 
@@ -141,6 +146,7 @@ public:
 	inline double getInterval() const noexcept { return interval; }
 	inline unsigned getPingSize() const noexcept { return pingsize; }
 	inline bool getUseDNS() const noexcept { return useDNS; }
+	inline unsigned getMaxHops() const noexcept { return maxHops; }
 
 protected:
 	void DoDataExchange(CDataExchange* pDX) override;
@@ -163,6 +169,7 @@ protected:
 	afx_msg LRESULT OnPublicNetworkInfo(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnHopNetworkInfo(WPARAM wParam, LPARAM lParam);
 	void LoadPublicNetworkInfo();
+	void ApplyNetworkInfoOption();
 
 	DECLARE_MESSAGE_MAP()
 public:

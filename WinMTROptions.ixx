@@ -50,6 +50,11 @@ public:
 	inline void SetMaxLRU(int mlru) noexcept { maxLRU = mlru; };
 	inline void SetUseIPv4(bool uip4) noexcept { useIPv4 = uip4; }
 	inline void SetUseIPv6(bool uip6) noexcept { useIPv6 = uip6; }
+	inline void SetMaxHops(unsigned value) noexcept { maxHops = value; }
+	inline void SetMaxDisplayPaths(unsigned value) noexcept { maxDisplayPaths = value; }
+	inline void SetAutoResizeHeight(bool value) noexcept { autoResizeHeight = value; }
+	inline void SetShowIpWithHostname(bool value) noexcept { showIpWithHostname = value; }
+	inline void SetNetworkInfoEnabled(bool value) noexcept { networkInfoEnabled = value; }
 
 	inline auto GetInterval() const noexcept { return interval; };
 	inline auto GetPingSize() const noexcept { return pingsize; };
@@ -57,6 +62,11 @@ public:
 	inline auto GetUseDNS() const noexcept { return useDNS; }
 	inline auto GetUseIPv4() const noexcept { return useIPv4; }
 	inline auto GetUseIPv6() const noexcept { return useIPv6; }
+	inline auto GetMaxHops() const noexcept { return maxHops; }
+	inline auto GetMaxDisplayPaths() const noexcept { return maxDisplayPaths; }
+	inline auto GetAutoResizeHeight() const noexcept { return autoResizeHeight; }
+	inline auto GetShowIpWithHostname() const noexcept { return showIpWithHostname; }
+	inline auto GetNetworkInfoEnabled() const noexcept { return networkInfoEnabled; }
 
 	enum { IDD = IDD_DIALOG_OPTIONS };
 	CEdit	m_editSize;
@@ -65,6 +75,11 @@ public:
 	CButton	m_checkDNS;
 	CButton m_useIPv4;
 	CButton m_useIPv6;
+	CEdit m_editMaxHops;
+	CEdit m_editMaxPaths;
+	CButton m_autoResizeHeight;
+	CButton m_showIpWithHostname;
+	CButton m_networkInfoEnabled;
 
 protected:
 	void DoDataExchange(CDataExchange* pDX) override;
@@ -82,6 +97,11 @@ private:
 	bool     useDNS = false;
 	bool	 useIPv4 = true;
 	bool	 useIPv6 = true;
+	unsigned maxHops = 30;
+	unsigned maxDisplayPaths = 8;
+	bool autoResizeHeight = true;
+	bool showIpWithHostname = false;
+	bool networkInfoEnabled = true;
 
 public:
 	afx_msg void OnBnClickedIpv4Check();
@@ -98,6 +118,7 @@ static char THIS_FILE[] = __FILE__;
 
 import <format>;
 import <iterator>;
+import <algorithm>;
 import WinMTRUtils;
 
 import WinMTR.License;
@@ -141,6 +162,11 @@ void WinMTROptions::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_CHECK_DNS, m_checkDNS);
 	DDX_Control(pDX, IDC_USEIPV6_CHECK, m_useIPv6);
 	DDX_Control(pDX, IDC_IPV4_CHECK, m_useIPv4);
+	DDX_Control(pDX, IDC_EDIT_MAX_HOPS, m_editMaxHops);
+	DDX_Control(pDX, IDC_EDIT_MAX_PATHS, m_editMaxPaths);
+	DDX_Control(pDX, IDC_CHECK_AUTO_HEIGHT, m_autoResizeHeight);
+	DDX_Control(pDX, IDC_CHECK_SHOW_IP, m_showIpWithHostname);
+	DDX_Control(pDX, IDC_CHECK_NETWORK_INFO, m_networkInfoEnabled);
 }
 
 
@@ -168,9 +194,19 @@ BOOL WinMTROptions::OnInitDialog()
 	*result.out = '\0';
 	m_editMaxLRU.SetWindowText(strtmp);
 
+	result = std::format_to_n(std::begin(strtmp), writable_size, WinMTRUtils::int_number_format, maxHops);
+	*result.out = '\0';
+	m_editMaxHops.SetWindowText(strtmp);
+	result = std::format_to_n(std::begin(strtmp), writable_size, WinMTRUtils::int_number_format, maxDisplayPaths);
+	*result.out = '\0';
+	m_editMaxPaths.SetWindowText(strtmp);
+
 	m_checkDNS.SetCheck(useDNS);
 	m_useIPv4.SetCheck(useIPv4);
 	m_useIPv6.SetCheck(useIPv6);
+	m_autoResizeHeight.SetCheck(autoResizeHeight);
+	m_showIpWithHostname.SetCheck(showIpWithHostname);
+	m_networkInfoEnabled.SetCheck(networkInfoEnabled);
 	
 	m_editInterval.SetFocus();
 	return FALSE;
@@ -200,8 +236,19 @@ void WinMTROptions::OnOK()
 	end = nullptr;
 	maxLRU = wcstoul(tmpstr, &end, 10);
 
+	m_editMaxHops.GetWindowText(tmpstr, 20);
+	end = nullptr;
+	maxHops = std::clamp(static_cast<unsigned>(wcstoul(tmpstr, &end, 10)), 1u, 30u);
+
+	m_editMaxPaths.GetWindowText(tmpstr, 20);
+	end = nullptr;
+	maxDisplayPaths = std::clamp(static_cast<unsigned>(wcstoul(tmpstr, &end, 10)), 1u, 8u);
+
 	useIPv4 = m_useIPv4.GetCheck();
 	useIPv6 = m_useIPv6.GetCheck();
+	autoResizeHeight = m_autoResizeHeight.GetCheck();
+	showIpWithHostname = m_showIpWithHostname.GetCheck();
+	networkInfoEnabled = m_networkInfoEnabled.GetCheck();
 
 	CDialog::OnOK();
 }

@@ -387,7 +387,7 @@ BOOL WinMTRDialog::OnInitDialog()
 	}
 
 	InitRegistry();
-	LoadPublicNetworkInfo();
+	ApplyNetworkInfoOption();
 
 	if (m_autostart) {
 		m_comboHost.SetWindowText(msz_defaulthostname.c_str());
@@ -470,7 +470,7 @@ void WinMTRDialog::OnSize(UINT nType, int cx, int cy)
 
 void WinMTRDialog::AutoSizeToContent()
 {
-	if (!::IsWindow(m_listMTR.m_hWnd) || IsIconic() || IsZoomed()) return;
+	if (!autoResizeHeight || !::IsWindow(m_listMTR.m_hWnd) || IsIconic() || IsZoomed()) return;
 	const auto itemCount = m_listMTR.GetItemCount();
 	if (itemCount != m_pendingAutoSizeRowCount) {
 		m_pendingAutoSizeRowCount = itemCount;
@@ -653,6 +653,12 @@ int WinMTRDialog::DisplayRedraw()
 	};
 
 	auto populateNetworkInfo = [&](int rowIndex, const s_nethost& item) {
+		if (!networkInfoEnabled) {
+			for (int column = 11; column <= 13; ++column) {
+				m_listMTR.SetItem(rowIndex, column, LVIF_TEXT, L"", 0, 0, 0, 0);
+			}
+			return;
+		}
 		const auto address = isValidAddress(item.addr) ? addr_to_string(item.addr) : std::wstring{};
 		public_network_info hopInfo;
 		bool hasHopInfo = false;
@@ -688,6 +694,10 @@ int WinMTRDialog::DisplayRedraw()
 	auto populateRow = [&](const s_nethost& item, int hop, bool alternative) {
 		auto name = item.getName();
 		if (name.empty()) name = noResponse;
+		const auto itemAddress = isValidAddress(item.addr) ? addr_to_string(item.addr) : std::wstring{};
+		if (showIpWithHostname && !itemAddress.empty() && name != itemAddress) {
+			name += L" (" + itemAddress + L")";
+		}
 		if (alternative) name = L"  + " + name;
 
 		if (m_listMTR.GetItemCount() <= row) m_listMTR.InsertItem(row, name.c_str());
@@ -714,7 +724,6 @@ int WinMTRDialog::DisplayRedraw()
 		++row;
 	};
 
-	constexpr size_t maxDisplayPaths = 8; // Linux MTR's default maxDisplayPath.
 	for (size_t hopIndex = 0; hopIndex < netstate.size(); ++hopIndex) {
 		populateRow(netstate[hopIndex], static_cast<int>(hopIndex + 1), false);
 		if (hopIndex < routeState.size()) {
@@ -760,6 +769,34 @@ void WinMTRDialog::LoadPublicNetworkInfo()
 	}).detach();
 }
 
+void WinMTRDialog::ApplyNetworkInfoOption()
+{
+	if (networkInfoEnabled) {
+		for (int column = 11; column <= 13; ++column) {
+			if (m_listMTR.GetColumnWidth(column) == 0) {
+				m_listMTR.SetColumnWidth(column, MTR_COL_LENGTH[column]);
+			}
+		}
+		SetDlgItemTextW(IDC_INFO_IP, L"IP：正在取得…");
+		SetDlgItemTextW(IDC_INFO_COUNTRY, L"國家：—");
+		SetDlgItemTextW(IDC_INFO_CITY, L"城市：—");
+		SetDlgItemTextW(IDC_INFO_ASN, L"ASN：—");
+		SetDlgItemTextW(IDC_INFO_HOSTNAME, L"Hostname：—");
+		SetDlgItemTextW(IDC_INFO_ISP, L"ISP：—");
+		LoadPublicNetworkInfo();
+	}
+	else {
+		for (int column = 11; column <= 13; ++column) m_listMTR.SetColumnWidth(column, 0);
+		SetDlgItemTextW(IDC_INFO_IP, L"IP：網路資訊查詢已關閉");
+		SetDlgItemTextW(IDC_INFO_COUNTRY, L"國家：—");
+		SetDlgItemTextW(IDC_INFO_CITY, L"城市：—");
+		SetDlgItemTextW(IDC_INFO_ASN, L"ASN：—");
+		SetDlgItemTextW(IDC_INFO_HOSTNAME, L"Hostname：—");
+		SetDlgItemTextW(IDC_INFO_ISP, L"ISP：—");
+	}
+	DisplayRedraw();
+}
+
 LRESULT WinMTRDialog::OnHopNetworkInfo([[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam)
 {
 	DisplayRedraw();
@@ -769,6 +806,7 @@ LRESULT WinMTRDialog::OnHopNetworkInfo([[maybe_unused]] WPARAM wParam, [[maybe_u
 LRESULT WinMTRDialog::OnPublicNetworkInfo([[maybe_unused]] WPARAM wParam, LPARAM lParam)
 {
 	std::unique_ptr<public_network_info> info(reinterpret_cast<public_network_info*>(lParam));
+	if (!networkInfoEnabled) return 0;
 	if (!info || !info->success) {
 		SetDlgItemTextW(IDC_INFO_IP, L"IP：無法取得");
 		return 0;

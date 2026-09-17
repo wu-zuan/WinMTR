@@ -26,5 +26,6 @@ export struct __declspec(novtable) IWinMTROptionsProvider {
 	virtual unsigned getPingSize() const noexcept = 0;
 	virtual double getInterval() const noexcept = 0;
 	virtual bool getUseDNS() const noexcept = 0;
+	virtual unsigned getMaxHops() const noexcept = 0;
 };
 

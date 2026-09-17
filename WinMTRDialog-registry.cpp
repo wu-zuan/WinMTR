@@ -36,6 +36,7 @@ import :ClassDef;
 
 import <format>;
 import <string_view>;
+import <algorithm>;
 import WinMTRVerUtil;
 import WinMTR.Options;
 
@@ -64,10 +65,12 @@ BOOL WinMTRDialog::InitRegistry() noexcept
 	}
 	static const auto WINMTR_VERSION = L"0.96";
 	static const auto WINMTR_LICENSE = L"GPL - GNU Public License";
-	static const auto WINMTR_HOMEPAGE = L"https://github.com/leeter/WinMTR-refresh";
+	static const auto WINMTR_HOMEPAGE = L"https://github.com/wu-zuan/winmtr";
+	static const auto WINMTR_UPSTREAM = L"https://github.com/leeter/WinMTR-refresh";
 	versionKey.SetStringValue(L"Version", WinMTRVerUtil::getExeVersion().c_str());
 	versionKey.SetStringValue(L"License", WINMTR_LICENSE);
 	versionKey.SetStringValue(L"HomePage", WINMTR_HOMEPAGE);
+	versionKey.SetStringValue(L"UpstreamHomePage", WINMTR_UPSTREAM);
 	CRegKey config_key;
 	if (config_key.Create(versionKey,
 		L"Config",
@@ -108,6 +111,41 @@ BOOL WinMTRDialog::InitRegistry() noexcept
 	else {
 		if (!hasIntervalFromCmdLine) interval = (float)tmp_dword / 1000.0;
 	}
+	if (config_key.QueryDWORDValue(L"MaxHops", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = maxHops.load();
+		config_key.SetDWORDValue(L"MaxHops", tmp_dword);
+	}
+	else maxHops = std::clamp(tmp_dword, 1ul, 30ul);
+	if (config_key.QueryDWORDValue(L"MaxDisplayPaths", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = maxDisplayPaths;
+		config_key.SetDWORDValue(L"MaxDisplayPaths", tmp_dword);
+	}
+	else maxDisplayPaths = std::clamp(tmp_dword, 1ul, 8ul);
+	if (config_key.QueryDWORDValue(L"AutoResizeHeight", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = autoResizeHeight ? 1 : 0;
+		config_key.SetDWORDValue(L"AutoResizeHeight", tmp_dword);
+	}
+	else autoResizeHeight = tmp_dword != 0;
+	if (config_key.QueryDWORDValue(L"ShowIpWithHostname", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = showIpWithHostname ? 1 : 0;
+		config_key.SetDWORDValue(L"ShowIpWithHostname", tmp_dword);
+	}
+	else showIpWithHostname = tmp_dword != 0;
+	if (config_key.QueryDWORDValue(L"NetworkInfoEnabled", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = networkInfoEnabled ? 1 : 0;
+		config_key.SetDWORDValue(L"NetworkInfoEnabled", tmp_dword);
+	}
+	else networkInfoEnabled = tmp_dword != 0;
+	if (config_key.QueryDWORDValue(L"UseIPv4", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = useIPv4 ? 1 : 0;
+		config_key.SetDWORDValue(L"UseIPv4", tmp_dword);
+	}
+	else useIPv4 = tmp_dword != 0;
+	if (config_key.QueryDWORDValue(L"UseIPv6", tmp_dword) != ERROR_SUCCESS) {
+		tmp_dword = useIPv6 ? 1 : 0;
+		config_key.SetDWORDValue(L"UseIPv6", tmp_dword);
+	}
+	else useIPv6 = tmp_dword != 0;
 	CRegKey lru_key;
 	if (lru_key.Create(versionKey,
 		L"LRU",
@@ -232,6 +270,11 @@ void WinMTRDialog::OnOptions()
 	optDlg.SetUseDNS(useDNS);
 	optDlg.SetUseIPv4(useIPv4);
 	optDlg.SetUseIPv6(useIPv6);
+	optDlg.SetMaxHops(maxHops.load());
+	optDlg.SetMaxDisplayPaths(maxDisplayPaths);
+	optDlg.SetAutoResizeHeight(autoResizeHeight);
+	optDlg.SetShowIpWithHostname(showIpWithHostname);
+	optDlg.SetNetworkInfoEnabled(networkInfoEnabled);
 
 	if (IDOK == optDlg.DoModal()) {
 
@@ -241,6 +284,11 @@ void WinMTRDialog::OnOptions()
 		useDNS = optDlg.GetUseDNS();
 		useIPv4 = optDlg.GetUseIPv4();
 		useIPv6 = optDlg.GetUseIPv6();
+		maxHops = optDlg.GetMaxHops();
+		maxDisplayPaths = optDlg.GetMaxDisplayPaths();
+		autoResizeHeight = optDlg.GetAutoResizeHeight();
+		showIpWithHostname = optDlg.GetShowIpWithHostname();
+		networkInfoEnabled = optDlg.GetNetworkInfoEnabled();
 
 		/*HKEY hKey;*/
 		DWORD tmp_dword;
@@ -256,7 +304,15 @@ void WinMTRDialog::OnOptions()
 			config_key.SetDWORDValue(L"UseDNS", tmp_dword);
 			tmp_dword = static_cast<DWORD>(interval * 1000);
 			config_key.SetDWORDValue(L"Interval", tmp_dword);
+			config_key.SetDWORDValue(L"MaxHops", maxHops.load());
+			config_key.SetDWORDValue(L"MaxDisplayPaths", maxDisplayPaths);
+			config_key.SetDWORDValue(L"AutoResizeHeight", autoResizeHeight ? 1 : 0);
+			config_key.SetDWORDValue(L"ShowIpWithHostname", showIpWithHostname ? 1 : 0);
+			config_key.SetDWORDValue(L"NetworkInfoEnabled", networkInfoEnabled ? 1 : 0);
+			config_key.SetDWORDValue(L"UseIPv4", useIPv4 ? 1 : 0);
+			config_key.SetDWORDValue(L"UseIPv6", useIPv6 ? 1 : 0);
 		}
+		ApplyNetworkInfoOption();
 		if (maxLRU < nrLRU) {
 			CRegKey lru_key;
 			lru_key.Open(HKEY_CURRENT_USER, lru_key_name, KEY_ALL_ACCESS);
