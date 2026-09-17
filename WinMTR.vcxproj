@@ -185,6 +185,7 @@
     <OutDir>.\$(Configuration)_$(PlatformTarget)\</OutDir>
     <IntDir>.\$(Configuration)_$(PlatformTarget)\</IntDir>
     <LinkIncremental>false</LinkIncremental>
+    <VcpkgTriplet>x64-windows</VcpkgTriplet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release Installer|x64'">
     <OutDir>.\$(Configuration)_$(PlatformTarget)\</OutDir>
