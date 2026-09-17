@@ -26,20 +26,10 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v3
 
-      - name: Install vcpkg dependencies
-        shell: pwsh
-        run: |
-          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
-          if (-not (Test-Path -LiteralPath $vcpkg)) { throw "vcpkg was not found on the GitHub runner." }
-          & $vcpkg integrate install
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed." }
-          & $vcpkg install --triplet x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency installation failed." }
-
       - name: Build Release x64
         shell: pwsh
         run: |
-          msbuild WinMTR.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal
+          msbuild WinMTR.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:VcpkgEnabled=false /v:minimal
           if ($LASTEXITCODE -ne 0) { throw "Release x64 build failed." }
 
       - name: Verify release executable
