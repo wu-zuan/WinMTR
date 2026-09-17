@@ -63,7 +63,7 @@ BOOL WinMTRDialog::InitRegistry() noexcept
 		return FALSE;
 
 	}
-	static const auto WINMTR_VERSION = L"0.96";
+	static const auto WINMTR_VERSION = L"1.0";
 	static const auto WINMTR_LICENSE = L"GPL - GNU Public License";
 	static const auto WINMTR_HOMEPAGE = L"https://github.com/wu-zuan/winmtr";
 	static const auto WINMTR_UPSTREAM = L"https://github.com/leeter/WinMTR-refresh";
