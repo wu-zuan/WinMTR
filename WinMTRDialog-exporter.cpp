@@ -49,10 +49,10 @@ namespace {
 	[[nodiscard]]
 	std::wstring makeTextOutput(const WinMTRNet& wmtrnet) {
 		std::wostringstream out_buf;
-		out_buf << L"|-------------------------------------------------------------------------------------------|\r\n" \
-			L"|                                      WinMTR statistics                                    |\r\n" \
-			L"|                       Host              -   %%  | Sent | Recv | Best | Avrg | Wrst | Last |\r\n" \
-			L"|-------------------------------------------------|------|------|------|------|------|------|\r\n"sv;
+		out_buf << L"|----------------------------------------------------------------------------------------------------------------------|\r\n" \
+			L"|                                          DiamondHost WinMTR 統計結果                                                 |\r\n" \
+			L"|                       主機              - 遺失 | 已送 | 已收 | 最佳 | 平均 | 最差 | 最近 | 抖動 | 標準差 |\r\n" \
+			L"|-------------------------------------------------|------|------|------|------|------|------|------|--------|\r\n"sv;
 		std::ostream_iterator<wchar_t, wchar_t> out(out_buf);
 		CString noResponse;
 		noResponse.LoadStringW(IDS_STRING_NO_RESPONSE_FROM_HOST);
@@ -62,13 +62,13 @@ namespace {
 			if (name.empty()) {
 				name = noResponse;
 			}
-			std::format_to(out, L"| {:40} - {:4} | {:4} | {:4} | {:4} | {:4} | {:4} | {:4} |\r\n"sv,
+			std::format_to(out, L"| {:40} - {:4} | {:4} | {:4} | {:4} | {:4} | {:4} | {:4} | {:4.1f} | {:6.1f} |\r\n"sv,
 				name, hop.getPercent(),
 				hop.xmit, hop.returned, hop.best,
-				hop.getAvg(), hop.worst, hop.last);
+				hop.getAvg(), hop.worst, hop.last, hop.getJitter(), hop.getStdDev());
 		}
 
-		out_buf << L"|_________________________________________________|______|______|______|______|______|______|\r\n"sv;
+		out_buf << L"|_________________________________________________|______|______|______|______|______|______|______|________|\r\n"sv;
 
 		CString cs_tmp;
 		(void)cs_tmp.LoadStringW(IDS_STRING_SB_NAME);
@@ -78,7 +78,7 @@ namespace {
 	// jscpd:ignore-start
 	std::wostream& makeHTMLOutput(WinMTRNet& wmtrnet, std::wostream& out) {
 		out << L"<table>" \
-			L"<thead><tr><th>Host</th><th>%%</th><th>Sent</th><th>Recv</th><th>Best</th><th>Avrg</th><th>Wrst</th><th>Last</th></tr></thead><tbody>"sv;
+			L"<thead><tr><th>主機名稱</th><th>遺失 %</th><th>已送</th><th>已收</th><th>最佳</th><th>平均</th><th>最差</th><th>最近</th><th>抖動</th><th>標準差</th></tr></thead><tbody>"sv;
 		std::ostream_iterator<wchar_t, wchar_t> outitr(out);
 
 		CString noResponse;
@@ -90,7 +90,7 @@ namespace {
 				name = noResponse;
 			}
 			std::format_to(outitr
-				, L"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"sv
+				, L"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.1f}</td><td>{:.1f}</td></tr>"sv
 				, name
 				, hop.getPercent()
 				, hop.xmit
@@ -99,6 +99,8 @@ namespace {
 				, hop.getAvg()
 				, hop.worst
 				, hop.last
+				, hop.getJitter()
+				, hop.getStdDev()
 			);
 		}
 
@@ -149,7 +151,7 @@ void WinMTRDialog::OnCHTC() noexcept
 //*****************************************************************************
 void WinMTRDialog::OnEXPT() noexcept
 {
-	const TCHAR BASED_CODE szFilter[] = _T("Text Files (*.txt)|*.txt|All Files (*.*)|*.*||");
+	const TCHAR BASED_CODE szFilter[] = _T("文字檔案 (*.txt)|*.txt|所有檔案 (*.*)|*.*||");
 
 	CFileDialog dlg(FALSE,
 		_T("TXT"),
@@ -174,7 +176,7 @@ void WinMTRDialog::OnEXPT() noexcept
 //*****************************************************************************
 void WinMTRDialog::OnEXPH() noexcept
 {
-	const TCHAR szFilter[] = _T("HTML Files (*.htm, *.html)|*.htm;*.html|All Files (*.*)|*.*||");
+	const TCHAR szFilter[] = _T("HTML 檔案 (*.htm, *.html)|*.htm;*.html|所有檔案 (*.*)|*.*||");
 
 	CFileDialog dlg(FALSE,
 		_T("HTML"),

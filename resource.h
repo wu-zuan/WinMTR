@@ -48,6 +48,16 @@
 #define IDC_MFCLINK1                    1026
 #define IDC_IPV4_CHECK                  1027
 #define IDC_USEIPV6_CHECK               1028
+#define ID_RESET_STATS                  1029
+#define ID_SCREENSHOT                   1030
+#define ID_DETAILS                      1031
+#define IDC_INFO_IP                     1032
+#define IDC_INFO_COUNTRY                1033
+#define IDC_INFO_CITY                   1034
+#define IDC_INFO_ASN                    1035
+#define IDC_INFO_HOSTNAME               1036
+#define IDC_INFO_ISP                    1037
+#define ID_NETWORK_DETAILS              1038
 
 // Next default values for new objects
 // 
@@ -55,7 +65,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        138
 #define _APS_NEXT_COMMAND_VALUE         32771
-#define _APS_NEXT_CONTROL_VALUE         1029
+#define _APS_NEXT_CONTROL_VALUE         1039
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

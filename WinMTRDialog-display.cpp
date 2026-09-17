@@ -26,16 +26,24 @@ module;
 #include <afx.h>
 #include <afxext.h>
 #include <afxdisp.h>
+#include <winhttp.h>
 #ifndef _AFX_NO_AFXCMN_SUPPORT
 #include <afxcmn.h>
 #endif 
 #include "resource.h"
-#include "WinMTRProperties.h"
+#pragma comment(lib, "winhttp.lib")
 module WinMTR.Dialog:display;
 import :ClassDef;
 import <format>;
 import <string>;
 import <string_view>;
+import <vector>;
+import <thread>;
+import <memory>;
+import <mutex>;
+import <unordered_map>;
+import <unordered_set>;
+import <algorithm>;
 
 import WinMTRVerUtil;
 import WinMTRIPUtils;
@@ -44,26 +52,138 @@ import WinMTRUtils;
 using namespace std::literals;
 
 namespace {
+	constexpr UINT WM_PUBLIC_NETWORK_INFO = WM_APP + 42;
+	constexpr UINT WM_HOP_NETWORK_INFO = WM_APP + 43;
+
+	struct public_network_info {
+		std::wstring ip;
+		std::wstring country;
+		std::wstring city;
+		std::wstring asn;
+		std::wstring hostname;
+		std::wstring isp;
+		bool success = false;
+	};
+
+	std::mutex hop_info_mutex;
+	std::unordered_map<std::wstring, public_network_info> hop_info_cache;
+	std::unordered_set<std::wstring> hop_info_pending;
+
+	struct winhttp_handle {
+		HINTERNET value = nullptr;
+		~winhttp_handle() { if (value) WinHttpCloseHandle(value); }
+		operator HINTERNET() const noexcept { return value; }
+	};
+
+	std::wstring utf8_to_wide(const std::string& input)
+	{
+		if (input.empty()) return {};
+		const auto length = MultiByteToWideChar(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), nullptr, 0);
+		std::wstring output(length, L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, input.data(), static_cast<int>(input.size()), output.data(), length);
+		return output;
+	}
+
+	std::wstring json_string(const std::wstring& json, std::wstring_view key)
+	{
+		const auto marker = std::wstring(L"\"") + std::wstring(key) + L"\"";
+		auto position = json.find(marker);
+		if (position == std::wstring::npos) return {};
+		position = json.find(L':', position + marker.size());
+		position = json.find(L'\"', position + 1);
+		if (position == std::wstring::npos) return {};
+		const auto end = json.find(L'\"', position + 1);
+		return end == std::wstring::npos ? std::wstring{} : json.substr(position + 1, end - position - 1);
+	}
+
+	std::wstring json_number(const std::wstring& json, std::wstring_view key)
+	{
+		const auto marker = std::wstring(L"\"") + std::wstring(key) + L"\"";
+		auto position = json.find(marker);
+		if (position == std::wstring::npos) return {};
+		position = json.find(L':', position + marker.size());
+		if (position == std::wstring::npos) return {};
+		position = json.find_first_of(L"0123456789", position + 1);
+		const auto end = json.find_first_not_of(L"0123456789", position);
+		return position == std::wstring::npos ? std::wstring{} : json.substr(position, end - position);
+	}
+
+	std::wstring traditional_country_name(std::wstring countryCode)
+	{
+		if (countryCode == L"TW") return L"台灣";
+		if (countryCode.empty()) return {};
+		wchar_t name[128]{};
+		if (GetGeoInfoEx(countryCode.data(), GEO_FRIENDLYNAME, name, static_cast<int>(std::size(name))) > 0) {
+			return name;
+		}
+		return countryCode;
+	}
+
+	public_network_info query_ip_info(std::wstring path = L"/json")
+	{
+		public_network_info info;
+		winhttp_handle session{ WinHttpOpen(L"DiamondHost-WinMTR/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+			WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0) };
+		if (!session) return info;
+		WinHttpSetTimeouts(session, 4000, 4000, 4000, 4000);
+		winhttp_handle connection{ WinHttpConnect(session, L"ipinfo.io", INTERNET_DEFAULT_HTTPS_PORT, 0) };
+		if (!connection) return info;
+		winhttp_handle request{ WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+			WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) };
+		if (!request || !WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+			WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request, nullptr)) return info;
+
+		std::string response;
+		for (;;) {
+			DWORD available = 0;
+			if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+			std::vector<char> buffer(available);
+			DWORD read = 0;
+			if (!WinHttpReadData(request, buffer.data(), available, &read)) return info;
+			response.append(buffer.data(), read);
+		}
+		const auto json = utf8_to_wide(response);
+		info.ip = json_string(json, L"ip");
+		info.country = traditional_country_name(json_string(json, L"country"));
+		info.city = json_string(json, L"city");
+		info.hostname = json_string(json, L"hostname");
+		const auto organization = json_string(json, L"org");
+		const auto separator = organization.find(L' ');
+		if (organization.starts_with(L"AS") && separator != std::wstring::npos) {
+			info.asn = organization.substr(2, separator - 2);
+			info.isp = organization.substr(separator + 1);
+		}
+		else {
+			info.isp = organization;
+		}
+		info.success = !info.ip.empty();
+		return info;
+	}
 	constexpr auto DEFAULT_PING_SIZE = 64;
 	constexpr auto DEFAULT_INTERVAL = 1.0;
 	constexpr auto DEFAULT_MAX_LRU = 128;
 	constexpr auto DEFAULT_DNS = true;
 
-#define MTR_NR_COLS 9
+#define MTR_NR_COLS 14
 	constexpr wchar_t MTR_COLS[MTR_NR_COLS][10] = {
-		L"Hostname",
-		L"Nr",
-		L"Loss %",
-		L"Sent",
-		L"Recv",
-		L"Best",
-		L"Avrg",
-		L"Worst",
-		L"Last"
+		L"主機",
+		L"跳",
+		L"丟包",
+		L"已送",
+		L"已收",
+		L"最佳",
+		L"平均",
+		L"最差",
+		L"最近",
+		L"抖動",
+		L"標準差",
+		L"國家",
+		L"ASN",
+		L"ISP"
 	};
 
 	constexpr int MTR_COL_LENGTH[MTR_NR_COLS] = {
-			190, 30, 50, 40, 40, 50, 50, 50, 50
+			255, 38, 55, 50, 50, 55, 55, 55, 55, 58, 65, 65, 65, 190
 	};
 	constexpr auto WINMTR_DIALOG_TIMER = 100;
 
@@ -81,11 +201,10 @@ BEGIN_MESSAGE_MAP(WinMTRDialog, CDialog)
 	ON_WM_QUERYDRAGICON()
 	ON_BN_CLICKED(ID_RESTART, OnRestart)
 	ON_BN_CLICKED(ID_OPTIONS, OnOptions)
-	ON_BN_CLICKED(ID_CTTC, OnCTTC)
-	ON_BN_CLICKED(ID_CHTC, OnCHTC)
-	ON_BN_CLICKED(ID_EXPT, OnEXPT)
-	ON_BN_CLICKED(ID_EXPH, OnEXPH)
-	ON_NOTIFY(NM_DBLCLK, IDC_LIST_MTR, OnDblclkList)
+	ON_BN_CLICKED(ID_RESET_STATS, OnResetStats)
+	ON_BN_CLICKED(ID_SCREENSHOT, OnScreenshot)
+	ON_MESSAGE(WM_PUBLIC_NETWORK_INFO, OnPublicNetworkInfo)
+	ON_MESSAGE(WM_HOP_NETWORK_INFO, OnHopNetworkInfo)
 	ON_CBN_SELCHANGE(IDC_COMBO_HOST, &WinMTRDialog::OnCbnSelchangeComboHost)
 	ON_CBN_SELENDOK(IDC_COMBO_HOST, &WinMTRDialog::OnCbnSelendokComboHost)
 	ON_CBN_CLOSEUP(IDC_COMBO_HOST, &WinMTRDialog::OnCbnCloseupComboHost)
@@ -130,8 +249,6 @@ void WinMTRDialog::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_LIST_MTR, m_listMTR);
 	DDX_Control(pDX, IDC_STATICS, m_staticS);
 	DDX_Control(pDX, IDC_STATICJ, m_staticJ);
-	DDX_Control(pDX, ID_EXPH, m_buttonExpH);
-	DDX_Control(pDX, ID_EXPT, m_buttonExpT);
 }
 
 
@@ -149,7 +266,7 @@ BOOL WinMTRDialog::OnInitDialog()
 #else
 	constexpr auto bitness = 64;
 #endif
-	const auto caption = std::format(L"WinMTR-Refresh v{} {} bit"sv, verNumber, bitness);
+	const auto caption = std::format(L"DiamondHost WinMTR v{}（{} 位元）"sv, verNumber, bitness);
 	SetTimer(1, WINMTR_DIALOG_TIMER, nullptr);
 	SetWindowTextW(caption.c_str());
 
@@ -157,7 +274,7 @@ BOOL WinMTRDialog::OnInitDialog()
 	SetIcon(m_hIcon, FALSE);
 
 	if (!statusBar.Create(this))
-		AfxMessageBox(L"Error creating status bar");
+		AfxMessageBox(L"無法建立狀態列。", MB_ICONERROR);
 	statusBar.GetStatusBarCtrl().SetMinHeight(23);
 
 	UINT sbi[1] = { IDS_STRING_SB_NAME };
@@ -185,6 +302,10 @@ BOOL WinMTRDialog::OnInitDialog()
 
 	for (int i = 0; i < MTR_NR_COLS; i++) {
 		m_listMTR.InsertColumn(i, MTR_COLS[i], LVCFMT_LEFT, MTR_COL_LENGTH[i], -1);
+	}
+	m_listMTR.SetExtendedStyle(m_listMTR.GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+	if (m_mtrFont.CreatePointFont(90, L"Consolas")) {
+		m_listMTR.SetFont(&m_mtrFont);
 	}
 
 	m_comboHost.SetFocus();
@@ -225,7 +346,48 @@ BOOL WinMTRDialog::OnInitDialog()
 	// And position the control bars
 	RepositionBars(AFX_IDW_CONTROLBAR_FIRST, AFX_IDW_CONTROLBAR_LAST, 0);
 
+	// Set the horizontal layout once at startup. During tracing only the
+	// height is allowed to respond to changing route rows.
+	CRect startupClient;
+	GetClientRect(&startupClient);
+	CRect startupList;
+	m_listMTR.GetWindowRect(&startupList);
+	ScreenToClient(&startupList);
+	int columnsWidth = 0;
+	for (int column = 0; column < MTR_NR_COLS; ++column) columnsWidth += m_listMTR.GetColumnWidth(column);
+	RECT desiredStartup{ 0, 0, startupList.left + columnsWidth + 28, startupClient.Height() };
+	const auto dpi = GetDpiForWindow(m_hWnd);
+	AdjustWindowRectExForDpi(&desiredStartup, static_cast<DWORD>(GetStyle()), FALSE,
+		static_cast<DWORD>(GetExStyle()), dpi);
+	CRect startupWindow;
+	GetWindowRect(&startupWindow);
+	MONITORINFO startupMonitor{ sizeof(startupMonitor) };
+	GetMonitorInfoW(MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &startupMonitor);
+	const CRect startupWorkArea(startupMonitor.rcWork);
+	const auto requestedStartupWidth = desiredStartup.right - desiredStartup.left;
+	const auto startupWidth = requestedStartupWidth < startupWorkArea.Width()
+		? requestedStartupWidth : startupWorkArea.Width();
+	const auto startupLeft = std::clamp(startupWindow.CenterPoint().x - startupWidth / 2,
+		startupWorkArea.left, startupWorkArea.right - startupWidth);
+	SetWindowPos(nullptr, startupLeft, startupWindow.top, startupWidth, startupWindow.Height(),
+		SWP_NOZORDER | SWP_NOACTIVATE);
+
+	if (startupWidth < desiredStartup.right - desiredStartup.left) {
+		m_mtrFont.DeleteObject();
+		if (m_mtrFont.CreatePointFont(80, L"Consolas")) m_listMTR.SetFont(&m_mtrFont);
+		CRect fittedClient;
+		GetClientRect(&fittedClient);
+		const auto availableWidth = fittedClient.Width() - startupList.left - 28;
+		for (int column = 0; column < MTR_NR_COLS; ++column) {
+			const auto minimumColumnWidth = MulDiv(36, dpi, 96);
+			const auto fittedColumnWidth = MulDiv(MTR_COL_LENGTH[column], availableWidth, columnsWidth);
+			m_listMTR.SetColumnWidth(column,
+				fittedColumnWidth > minimumColumnWidth ? fittedColumnWidth : minimumColumnWidth);
+		}
+	}
+
 	InitRegistry();
+	LoadPublicNetworkInfo();
 
 	if (m_autostart) {
 		m_comboHost.SetWindowText(msz_defaulthostname.c_str());
@@ -247,10 +409,10 @@ void WinMTRDialog::OnSizing(UINT fwSide, LPRECT pRect)
 	int iWidth = (pRect->right) - (pRect->left);
 	int iHeight = (pRect->bottom) - (pRect->top);
 
-	if (iWidth < 600)
-		pRect->right = pRect->left + 600;
-	if (iHeight < 250)
-		pRect->bottom = pRect->top + 250;
+	if (iWidth < 820)
+		pRect->right = pRect->left + 820;
+	if (iHeight < 400)
+		pRect->bottom = pRect->top + 400;
 }
 
 
@@ -289,20 +451,6 @@ void WinMTRDialog::OnSize(UINT nType, int cx, int cy)
 		m_buttonExit.SetWindowPos(nullptr, r.Width() - lb.Width() - scaledXOffset, lb.TopLeft().y, lb.Width(), lb.Height(), SWP_NOSIZE | SWP_NOZORDER);
 	}
 
-	if (::IsWindow(m_buttonExpH.m_hWnd)) {
-		const auto dpi = GetDpiForWindow(m_buttonExpH.m_hWnd);
-		m_buttonExpH.GetWindowRect(&lb);
-		ScreenToClient(&lb);
-		const auto scaledXOffset = MulDiv(21, dpi, 96);
-		m_buttonExpH.SetWindowPos(nullptr, r.Width() - lb.Width() - scaledXOffset, lb.TopLeft().y, lb.Width(), lb.Height(), SWP_NOSIZE | SWP_NOZORDER);
-	}
-	if (::IsWindow(m_buttonExpT.m_hWnd)) {
-		const auto dpi = GetDpiForWindow(m_buttonExpT.m_hWnd);
-		m_buttonExpT.GetWindowRect(&lb);
-		ScreenToClient(&lb);
-		const auto scaledXOffset = MulDiv(103, dpi, 96);
-		m_buttonExpT.SetWindowPos(nullptr, r.Width() - lb.Width() - scaledXOffset, lb.TopLeft().y, lb.Width(), lb.Height(), SWP_NOSIZE | SWP_NOZORDER);
-	}
 
 	if (::IsWindow(m_listMTR.m_hWnd)) {
 		const auto dpi = GetDpiForWindow(m_listMTR.m_hWnd);
@@ -318,6 +466,61 @@ void WinMTRDialog::OnSize(UINT nType, int cx, int cy)
 
 	RepositionBars(AFX_IDW_CONTROLBAR_FIRST, AFX_IDW_CONTROLBAR_LAST, 0);
 
+}
+
+void WinMTRDialog::AutoSizeToContent()
+{
+	if (!::IsWindow(m_listMTR.m_hWnd) || IsIconic() || IsZoomed()) return;
+	const auto itemCount = m_listMTR.GetItemCount();
+	if (itemCount != m_pendingAutoSizeRowCount) {
+		m_pendingAutoSizeRowCount = itemCount;
+	}
+	if (itemCount == m_lastAutoSizeRowCount) return;
+	m_lastAutoSizeRowCount = itemCount;
+
+	const auto dpi = GetDpiForWindow(m_hWnd);
+	CRect listRect;
+	m_listMTR.GetWindowRect(&listRect);
+	ScreenToClient(&listRect);
+
+	int rowHeight = MulDiv(20, dpi, 96);
+	if (itemCount > 0) {
+		CRect itemRect;
+		if (m_listMTR.GetItemRect(0, &itemRect, LVIR_BOUNDS)) rowHeight = itemRect.Height();
+	}
+	int headerHeight = MulDiv(24, dpi, 96);
+	if (const auto* header = m_listMTR.GetHeaderCtrl(); header && ::IsWindow(header->m_hWnd)) {
+		CRect headerRect;
+		header->GetWindowRect(&headerRect);
+		headerHeight = headerRect.Height();
+	}
+
+	const auto desiredListHeight = headerHeight + itemCount * rowHeight + MulDiv(6, dpi, 96);
+	const auto desiredClientHeight = listRect.top + desiredListHeight + MulDiv(29, dpi, 96);
+
+	CRect currentClient;
+	GetClientRect(&currentClient);
+	RECT desiredWindow{ 0, 0, currentClient.Width(), desiredClientHeight };
+	AdjustWindowRectExForDpi(&desiredWindow, static_cast<DWORD>(GetStyle()), FALSE,
+		static_cast<DWORD>(GetExStyle()), dpi);
+	int desiredHeight = desiredWindow.bottom - desiredWindow.top;
+
+	MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+	GetMonitorInfoW(MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &monitorInfo);
+	const CRect workArea(monitorInfo.rcWork);
+	desiredHeight = std::clamp(desiredHeight, MulDiv(400, dpi, 96), workArea.Height());
+
+	CRect currentWindow;
+	GetWindowRect(&currentWindow);
+	if (std::abs(currentWindow.Height() - desiredHeight) <= 2) return;
+
+	const auto top = std::clamp(currentWindow.top, workArea.top, workArea.bottom - desiredHeight);
+	SetRedraw(FALSE);
+	SetWindowPos(nullptr, currentWindow.left, top, currentWindow.Width(), desiredHeight,
+		SWP_NOZORDER | SWP_NOACTIVATE);
+	SetRedraw(TRUE);
+	RedrawWindow(nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
 
@@ -358,54 +561,6 @@ void WinMTRDialog::OnPaint()
 HCURSOR WinMTRDialog::OnQueryDragIcon()
 {
 	return (HCURSOR)m_hIcon;
-}
-
-
-//*****************************************************************************
-// WinMTRDialog::OnDblclkList
-//
-//*****************************************************************************
-void WinMTRDialog::OnDblclkList([[maybe_unused]] NMHDR* pNMHDR, LRESULT* pResult)
-{
-	using namespace std::string_view_literals;
-	*pResult = 0;
-
-	if (state == STATES::TRACING) {
-
-		POSITION pos = m_listMTR.GetFirstSelectedItemPosition();
-		if (pos != nullptr) {
-			int nItem = m_listMTR.GetNextSelectedItem(pos);
-			WinMTRProperties wmtrprop;
-
-			if (const auto lstate = wmtrnet->getStateAt(nItem); !isValidAddress(lstate.addr)) {
-				wmtrprop.host.clear();
-				wmtrprop.ip.clear();
-				wmtrprop.comment = lstate.getName();
-
-				wmtrprop.pck_loss = wmtrprop.pck_sent = wmtrprop.pck_recv = 0;
-
-				wmtrprop.ping_avrg = wmtrprop.ping_last = 0.0;
-				wmtrprop.ping_best = wmtrprop.ping_worst = 0.0;
-			}
-			else {
-				wmtrprop.host = lstate.getName();
-				wmtrprop.ip = addr_to_string(lstate.addr);
-
-				wmtrprop.comment = L"Host alive."sv;
-
-				wmtrprop.ping_avrg = static_cast<float>(lstate.getAvg());
-				wmtrprop.ping_last = static_cast<float>(lstate.last);
-				wmtrprop.ping_best = static_cast<float>(lstate.best);
-				wmtrprop.ping_worst = static_cast<float>(lstate.worst);
-
-				wmtrprop.pck_loss = lstate.getPercent();
-				wmtrprop.pck_recv = lstate.returned;
-				wmtrprop.pck_sent = lstate.xmit;
-			}
-
-			wmtrprop.DoModal();
-		}
-	}
 }
 
 
@@ -479,61 +634,103 @@ void WinMTRDialog::OnCancel()
 //*****************************************************************************
 int WinMTRDialog::DisplayRedraw()
 {
-	wchar_t buf[255] = {}, nr_crt[255] = {};
+	wchar_t buf[255] = {};
 	const auto netstate = wmtrnet->getCurrentState();
-	const auto nh = netstate.size();
-	while (m_listMTR.GetItemCount() > nh) {
-		m_listMTR.DeleteItem(m_listMTR.GetItemCount() - 1);
-	}
+	const auto routeState = wmtrnet->getCurrentRoutes();
 
 	static CString noResponse((LPCWSTR)IDS_STRING_NO_RESPONSE_FROM_HOST);
+	int row = 0;
 
-	for (int i = 0; const auto & host : netstate) {
+	auto setInteger = [&](int rowIndex, int column, int value) {
+		const auto result = std::format_to_n(buf, std::size(buf) - 1, L"{}", value);
+		*result.out = L'\0';
+		m_listMTR.SetItem(rowIndex, column, LVIF_TEXT, buf, 0, 0, 0, 0);
+	};
+	auto setFloat = [&](int rowIndex, int column, double value) {
+		const auto result = std::format_to_n(buf, std::size(buf) - 1, L"{:.1f}", value);
+		*result.out = L'\0';
+		m_listMTR.SetItem(rowIndex, column, LVIF_TEXT, buf, 0, 0, 0, 0);
+	};
 
-		auto name = host.getName();
-		if (name.empty()) {
-			name = noResponse;
+	auto populateNetworkInfo = [&](int rowIndex, const s_nethost& item) {
+		const auto address = isValidAddress(item.addr) ? addr_to_string(item.addr) : std::wstring{};
+		public_network_info hopInfo;
+		bool hasHopInfo = false;
+		bool startLookup = false;
+		if (!address.empty()) {
+			std::unique_lock lock(hop_info_mutex);
+			if (const auto found = hop_info_cache.find(address); found != hop_info_cache.end()) {
+				hopInfo = found->second;
+				hasHopInfo = hopInfo.success;
+			}
+			else {
+				startLookup = hop_info_pending.insert(address).second;
+			}
 		}
+		m_listMTR.SetItem(rowIndex, 11, LVIF_TEXT, hasHopInfo ? hopInfo.country.c_str() : L"", 0, 0, 0, 0);
+		m_listMTR.SetItem(rowIndex, 12, LVIF_TEXT, hasHopInfo ? hopInfo.asn.c_str() : L"", 0, 0, 0, 0);
+		m_listMTR.SetItem(rowIndex, 13, LVIF_TEXT, hasHopInfo ? hopInfo.isp.c_str() : L"", 0, 0, 0, 0);
 
-		auto result = std::format_to_n(nr_crt, std::size(nr_crt) - 1, WinMTRUtils::int_number_format, i + 1);
-		*result.out = '\0';
-		if (m_listMTR.GetItemCount() <= i)
-			m_listMTR.InsertItem(i, name.c_str());
-		else
-			m_listMTR.SetItem(i, 0, LVIF_TEXT, name.c_str(), 0, 0, 0, 0);
+		if (startLookup) {
+			auto window = GetSafeHwnd();
+			std::thread([window, address]() {
+				auto info = query_ip_info(L"/" + address + L"/json");
+				{
+					std::unique_lock lock(hop_info_mutex);
+					hop_info_cache.insert_or_assign(address, std::move(info));
+					hop_info_pending.erase(address);
+				}
+				::PostMessageW(window, WM_HOP_NETWORK_INFO, 0, 0);
+			}).detach();
+		}
+	};
 
-		m_listMTR.SetItem(i, 1, LVIF_TEXT, nr_crt, 0, 0, 0, 0);
-		constexpr auto writable_size = std::size(buf) - 1;
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.getPercent());
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 2, LVIF_TEXT, buf, 0, 0, 0, 0);
+	auto populateRow = [&](const s_nethost& item, int hop, bool alternative) {
+		auto name = item.getName();
+		if (name.empty()) name = noResponse;
+		if (alternative) name = L"  + " + name;
 
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.xmit);
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 3, LVIF_TEXT, buf, 0, 0, 0, 0);
+		if (m_listMTR.GetItemCount() <= row) m_listMTR.InsertItem(row, name.c_str());
+		else m_listMTR.SetItem(row, 0, LVIF_TEXT, name.c_str(), 0, 0, 0, 0);
 
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.returned);
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 4, LVIF_TEXT, buf, 0, 0, 0, 0);
+		setInteger(row, 1, hop);
+		if (alternative) {
+			m_listMTR.SetItem(row, 2, LVIF_TEXT, L"", 0, 0, 0, 0);
+			m_listMTR.SetItem(row, 3, LVIF_TEXT, L"", 0, 0, 0, 0);
+		}
+		else {
+			const auto loss = std::format(L"{}%", item.getPercent());
+			m_listMTR.SetItem(row, 2, LVIF_TEXT, loss.c_str(), 0, 0, 0, 0);
+			setInteger(row, 3, item.xmit);
+		}
+		setInteger(row, 4, item.returned);
+		setFloat(row, 5, static_cast<double>(item.best));
+		setFloat(row, 6, static_cast<double>(item.getAvg()));
+		setFloat(row, 7, static_cast<double>(item.worst));
+		setFloat(row, 8, static_cast<double>(item.last));
+		setFloat(row, 9, item.getJitter());
+		setFloat(row, 10, item.getStdDev());
+		populateNetworkInfo(row, item);
+		++row;
+	};
 
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.best);
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 5, LVIF_TEXT, buf, 0, 0, 0, 0);
-
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.getAvg());
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 6, LVIF_TEXT, buf, 0, 0, 0, 0);
-
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.worst);
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 7, LVIF_TEXT, buf, 0, 0, 0, 0);
-
-		result = std::format_to_n(buf, writable_size, WinMTRUtils::int_number_format, host.last);
-		*result.out = '\0';
-		m_listMTR.SetItem(i, 8, LVIF_TEXT, buf, 0, 0, 0, 0);
-
-		i++;
+	constexpr size_t maxDisplayPaths = 8; // Linux MTR's default maxDisplayPath.
+	for (size_t hopIndex = 0; hopIndex < netstate.size(); ++hopIndex) {
+		populateRow(netstate[hopIndex], static_cast<int>(hopIndex + 1), false);
+		if (hopIndex < routeState.size()) {
+			const auto& paths = routeState[hopIndex];
+			const auto currentAddress = addr_to_string(netstate[hopIndex].addr);
+			size_t displayedPaths = 1;
+			for (const auto& path : paths) {
+				if (displayedPaths >= maxDisplayPaths) break;
+				if (addr_to_string(path.addr) == currentAddress) continue;
+				populateRow(path, static_cast<int>(hopIndex + 1), true);
+				++displayedPaths;
+			}
+		}
 	}
+	while (m_listMTR.GetItemCount() > row) m_listMTR.DeleteItem(m_listMTR.GetItemCount() - 1);
+	AutoSizeToContent();
 
 	return 0;
 }
@@ -552,4 +749,81 @@ void WinMTRDialog::OnCbnCloseupComboHost()
 	if (m_comboHost.GetCurSel() == m_comboHost.GetCount() - 1) {
 		ClearHistory();
 	}
+}
+
+void WinMTRDialog::LoadPublicNetworkInfo()
+{
+	auto window = GetSafeHwnd();
+	std::thread([window]() {
+		auto* info = new public_network_info(query_ip_info());
+		if (!::PostMessageW(window, WM_PUBLIC_NETWORK_INFO, 0, reinterpret_cast<LPARAM>(info))) delete info;
+	}).detach();
+}
+
+LRESULT WinMTRDialog::OnHopNetworkInfo([[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam)
+{
+	DisplayRedraw();
+	return 0;
+}
+
+LRESULT WinMTRDialog::OnPublicNetworkInfo([[maybe_unused]] WPARAM wParam, LPARAM lParam)
+{
+	std::unique_ptr<public_network_info> info(reinterpret_cast<public_network_info*>(lParam));
+	if (!info || !info->success) {
+		SetDlgItemTextW(IDC_INFO_IP, L"IP：無法取得");
+		return 0;
+	}
+	SetDlgItemTextW(IDC_INFO_IP, (L"IP：" + info->ip).c_str());
+	SetDlgItemTextW(IDC_INFO_COUNTRY, (L"國家：" + info->country).c_str());
+	SetDlgItemTextW(IDC_INFO_CITY, (L"城市：" + info->city).c_str());
+	SetDlgItemTextW(IDC_INFO_ASN, (L"ASN：" + info->asn).c_str());
+	SetDlgItemTextW(IDC_INFO_HOSTNAME, (L"Hostname：" + info->hostname).c_str());
+	SetDlgItemTextW(IDC_INFO_ISP, (L"ISP：" + info->isp).c_str());
+	return 0;
+}
+
+void WinMTRDialog::OnResetStats() noexcept
+{
+	wmtrnet->ResetHops();
+	m_listMTR.DeleteAllItems();
+	m_pendingAutoSizeRowCount = -1;
+	m_lastAutoSizeRowCount = -1;
+	AutoSizeToContent();
+	statusBar.SetPaneText(0, L"統計資料已重新開始。追蹤工作仍在繼續。");
+}
+
+void WinMTRDialog::OnScreenshot()
+{
+	CRect windowRect;
+	GetWindowRect(&windowRect);
+	CWindowDC windowDc(this);
+	CDC memoryDc;
+	if (!memoryDc.CreateCompatibleDC(&windowDc)) {
+		AfxMessageBox(L"無法建立截圖。", MB_ICONERROR);
+		return;
+	}
+
+	CBitmap bitmap;
+	if (!bitmap.CreateCompatibleBitmap(&windowDc, windowRect.Width(), windowRect.Height())) {
+		AfxMessageBox(L"無法建立截圖。", MB_ICONERROR);
+		return;
+	}
+
+	auto* previous = memoryDc.SelectObject(&bitmap);
+	const BOOL captured = PrintWindow(&memoryDc, 0x00000002);
+	memoryDc.SelectObject(previous);
+	if (!captured || !OpenClipboard()) {
+		AfxMessageBox(L"無法將截圖複製到剪貼簿。", MB_ICONERROR);
+		return;
+	}
+
+	EmptyClipboard();
+	if (SetClipboardData(CF_BITMAP, bitmap.GetSafeHandle()) != nullptr) {
+		bitmap.Detach();
+		statusBar.SetPaneText(0, L"已將視窗截圖複製到剪貼簿。");
+	}
+	else {
+		AfxMessageBox(L"無法將截圖複製到剪貼簿。", MB_ICONERROR);
+	}
+	CloseClipboard();
 }

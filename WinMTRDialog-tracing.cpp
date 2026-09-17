@@ -72,7 +72,7 @@ bool WinMTRDialog::InitMTRNet() noexcept
 		}
 	}
 
-	const auto buf = std::format(L"Resolving host {}..."sv, sHost.GetString());
+	const auto buf = std::format(L"正在解析主機 {}……"sv, sHost.GetString());
 	statusBar.SetPaneText(0, buf.c_str());
 	std::unique_ptr<ADDRINFOEXW, addrinfo_deleter> holder;
 	ADDRINFOEXW hint = { .ai_family = AF_UNSPEC };

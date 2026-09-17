@@ -36,12 +36,15 @@ export module WinMTR.Net:ClassDef;
 import <optional>;
 import <atomic>;
 import <array>;
+import <vector>;
+import <algorithm>;
 import <mutex>;
 import <memory>;
 import <stop_token>;
 import <winrt/base.h>;
 import <winrt/Windows.Foundation.h>;
 import WinMTRSNetHost;
+import WinMTRIPUtils;
 import WinMTROptionsProvider;
 import winmtr.helper;
 
@@ -77,8 +80,12 @@ public:
 
 	void	ResetHops() noexcept
 	{
+		std::unique_lock lock(ghMutex);
 		for (auto& h : this->host) {
 			h = s_nethost();
+		}
+		for (auto& paths : this->routes) {
+			paths.clear();
 		}
 	}
 	[[nodiscard]]
@@ -86,6 +93,7 @@ public:
 
 	[[nodiscard]]
 	std::vector<s_nethost> getCurrentState() const;
+	std::vector<std::vector<s_nethost>> getCurrentRoutes() const;
 	s_nethost getStateAt(int at) const
 	{
 		std::unique_lock lock(ghMutex);
@@ -94,7 +102,9 @@ public:
 
 	static constexpr auto MAX_HOPS = 30;
 private:
+	static constexpr auto MAX_ROUTE_PATHS = 128;
 	std::array<s_nethost, WinMTRNet::MAX_HOPS>	host;
+	std::array<std::vector<s_nethost>, WinMTRNet::MAX_HOPS>	routes;
 	SOCKADDR_INET last_remote_addr;
 	mutable std::recursive_mutex	ghMutex;
 	std::optional<winrt::Windows::Foundation::IAsyncAction> tracer;
@@ -109,25 +119,53 @@ private:
 		std::unique_lock lock(ghMutex);
 		return host[at].addr;
 	}
-	winrt::fire_and_forget	SetAddr(int at, SOCKADDR_INET addr);
+	winrt::fire_and_forget	ResolveRouteName(int at, SOCKADDR_INET addr);
 	void	SetName(int at, std::wstring n)
 	{
 		std::unique_lock lock(ghMutex);
 		host[at].name = std::move(n);
 	}
 
-	void addNewReturn(int at, int last)
+	bool addNewReturn(int at, int last, SOCKADDR_INET addr)
 	{
 		std::unique_lock lock(ghMutex);
-		host[at].last = last;
-		host[at].total += last;
-		if (host[at].best > last || host[at].xmit == 1) {
-			host[at].best = last;
+		auto updateStatistics = [last](s_nethost& target) {
+			if (target.returned > 0) {
+				const auto difference = last > target.last ? last - target.last : target.last - last;
+				target.jitter_total += static_cast<unsigned long long>(difference);
+			}
+			target.last = last;
+			target.total += last;
+			target.total_squared += static_cast<unsigned long long>(last) * last;
+			if (target.best > last || target.returned == 0) target.best = last;
+			if (target.worst < last) target.worst = last;
+			target.returned++;
 		};
-		if (host[at].worst < last) {
-			host[at].worst = last;
+
+		const auto address = addr_to_string(addr);
+		const bool currentAddressChanged = addr_to_string(host[at].addr) != address;
+		if (currentAddressChanged) {
+			host[at].addr = addr;
+			host[at].name.clear();
 		}
-		host[at].returned++;
+		updateStatistics(host[at]);
+
+		auto& paths = routes[at];
+		auto found = std::ranges::find_if(paths, [&address](const s_nethost& path) {
+			return addr_to_string(path.addr) == address;
+		});
+		const bool isNewRoute = found == paths.end();
+		if (isNewRoute && paths.size() < MAX_ROUTE_PATHS) {
+			s_nethost path;
+			path.addr = addr;
+			paths.push_back(std::move(path));
+			found = paths.end() - 1;
+		}
+		if (found != paths.end()) {
+			updateStatistics(*found);
+			if (currentAddressChanged && !found->name.empty()) host[at].name = found->name;
+		}
+		return isNewRoute || (currentAddressChanged && host[at].name.empty());
 	}
 	void	AddXmit(int at)
 	{

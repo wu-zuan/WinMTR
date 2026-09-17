@@ -179,66 +179,68 @@ winrt::Windows::Foundation::IAsyncAction WinMTRNet::handleICMP(T remote_addr, st
 			switch (icmp_echo_reply->Status) {
 			case IP_SUCCESS:
 			[[likely]] case IP_TTL_EXPIRED_TRANSIT:
-				this->addNewReturn(mine.ttl - 1, icmp_echo_reply->RoundTripTime);
 				{
 					auto naddr = traits::to_addr_from_ping(icmp_echo_reply);
-					this->SetAddr(mine.ttl - 1, to_sockaddr_inet(naddr));
+					auto address = to_sockaddr_inet(naddr);
+					if (this->addNewReturn(mine.ttl - 1, icmp_echo_reply->RoundTripTime, address)) {
+						this->ResolveRouteName(mine.ttl - 1, address);
+					}
 				}
 				break;
 			case IP_BUF_TOO_SMALL:
-				this->SetName(mine.ttl - 1, L"Reply buffer too small."s);
+				this->SetName(mine.ttl - 1, L"回覆緩衝區太小。"s);
 				break;
 			case IP_DEST_NET_UNREACHABLE:
-				this->SetName(mine.ttl - 1, L"Destination network unreachable."s);
+				this->SetName(mine.ttl - 1, L"無法連線至目的網路。"s);
 				break;
 			case IP_DEST_HOST_UNREACHABLE:
-				this->SetName(mine.ttl - 1, L"Destination host unreachable."s);
+				this->SetName(mine.ttl - 1, L"無法連線至目的主機。"s);
 				break;
 			case IP_DEST_PROT_UNREACHABLE:
-				this->SetName(mine.ttl - 1, L"Destination protocol unreachable."s);
+				this->SetName(mine.ttl - 1, L"無法使用目的通訊協定。"s);
 				break;
 			case IP_DEST_PORT_UNREACHABLE:
-				this->SetName(mine.ttl - 1, L"Destination port unreachable."s);
+				this->SetName(mine.ttl - 1, L"無法連線至目的連接埠。"s);
 				break;
 			case IP_NO_RESOURCES:
-				this->SetName(mine.ttl - 1, L"Insufficient IP resources were available."s);
+				this->SetName(mine.ttl - 1, L"可用的 IP 資源不足。"s);
 				break;
 			case IP_BAD_OPTION:
-				this->SetName(mine.ttl - 1, L"Bad IP option was specified."s);
+				this->SetName(mine.ttl - 1, L"指定的 IP 選項無效。"s);
 				break;
 			case IP_HW_ERROR:
-				this->SetName(mine.ttl - 1, L"Hardware error occurred."s);
+				this->SetName(mine.ttl - 1, L"發生硬體錯誤。"s);
 				break;
 			case IP_PACKET_TOO_BIG:
-				this->SetName(mine.ttl - 1, L"Packet was too big."s);
+				this->SetName(mine.ttl - 1, L"封包過大。"s);
 				break;
 			case IP_REQ_TIMED_OUT:
-				this->SetName(mine.ttl - 1, L"Request timed out."s);
+				this->SetName(mine.ttl - 1, L"要求逾時。"s);
 				break;
 			case IP_BAD_REQ:
-				this->SetName(mine.ttl - 1, L"Bad request."s);
+				this->SetName(mine.ttl - 1, L"要求無效。"s);
 				break;
 			case IP_BAD_ROUTE:
-				this->SetName(mine.ttl - 1, L"Bad route."s);
+				this->SetName(mine.ttl - 1, L"路由無效。"s);
 				break;
 			case IP_TTL_EXPIRED_REASSEM:
-				this->SetName(mine.ttl - 1, L"The time to live expired during fragment reassembly."s);
+				this->SetName(mine.ttl - 1, L"片段重組期間 TTL 已到期。"s);
 				break;
 			case IP_PARAM_PROBLEM:
-				this->SetName(mine.ttl - 1, L"Parameter problem."s);
+				this->SetName(mine.ttl - 1, L"參數錯誤。"s);
 				break;
 			case IP_SOURCE_QUENCH:
-				this->SetName(mine.ttl - 1, L"Datagrams are arriving too fast to be processed and datagrams may have been discarded."s);
+				this->SetName(mine.ttl - 1, L"資料包抵達速度過快，部分資料可能已遭捨棄。"s);
 				break;
 			case IP_OPTION_TOO_BIG:
-				this->SetName(mine.ttl - 1, L"An IP option was too big."s);
+				this->SetName(mine.ttl - 1, L"IP 選項過大。"s);
 				break;
 			case IP_BAD_DESTINATION:
-				this->SetName(mine.ttl - 1, L"Bad destination."s);
+				this->SetName(mine.ttl - 1, L"目的位址無效。"s);
 				break;
 			case IP_GENERAL_FAILURE:
 			default:
-				this->SetName(mine.ttl - 1, L"General failure."s);
+				this->SetName(mine.ttl - 1, L"一般錯誤。"s);
 				break;
 			}
 			const auto intervalInSec = this->options->getInterval() * 1s;
@@ -254,25 +256,15 @@ winrt::Windows::Foundation::IAsyncAction WinMTRNet::handleICMP(T remote_addr, st
 	co_return;
 }
 
-winrt::fire_and_forget	WinMTRNet::SetAddr(int at, SOCKADDR_INET addr)
+winrt::fire_and_forget	WinMTRNet::ResolveRouteName(int at, SOCKADDR_INET addr)
 {
-	{
-		std::unique_lock lock(ghMutex);
-		if (isValidAddress(host[at].addr) || !isValidAddress(addr)) {
-			co_return;
-		}
-		host[at].addr = addr;
-		//TRACE_MSG(L"Start DnsResolverThread for new address " << addr << L". Old addr value was " << host[at].addr);
-	}
-	if (!options->getUseDNS()) {
-		co_return;
-	}
+	if (!options->getUseDNS() || !isValidAddress(addr)) co_return;
 	auto local_at = at;
 	// this could happen after a cleanup is called, so keep this alive until the coroutine returns
 	auto sharedThis = shared_from_this();
 	co_await winrt::resume_background();
 	wchar_t buf[NI_MAXHOST] = {};
-	auto tempaddr = sharedThis->GetAddr(local_at);
+	auto tempaddr = addr;
 
 	if (const auto nresult = GetNameInfoW(
 		reinterpret_cast<sockaddr*>(&tempaddr)
@@ -284,10 +276,20 @@ winrt::fire_and_forget	WinMTRNet::SetAddr(int at, SOCKADDR_INET addr)
 		, 0);
 		// zero on success
 		!nresult) {
-		sharedThis->SetName(local_at, buf);
+		std::unique_lock lock(sharedThis->ghMutex);
+		const auto address = addr_to_string(tempaddr);
+		for (auto& path : sharedThis->routes[local_at]) {
+			if (addr_to_string(path.addr) == address) path.name = buf;
+		}
+		if (addr_to_string(sharedThis->host[local_at].addr) == address) sharedThis->host[local_at].name = buf;
 	}
 	else {
-		sharedThis->SetName(local_at, addr_to_string(tempaddr));
+		std::unique_lock lock(sharedThis->ghMutex);
+		const auto address = addr_to_string(tempaddr);
+		for (auto& path : sharedThis->routes[local_at]) {
+			if (addr_to_string(path.addr) == address) path.name = address;
+		}
+		if (addr_to_string(sharedThis->host[local_at].addr) == address) sharedThis->host[local_at].name = address;
 	}
 
 	TRACE_MSG(L"DNS resolver thread stopped.");

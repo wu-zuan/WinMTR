@@ -36,6 +36,7 @@ export module WinMTRSNetHost;
 
 import WinMTRIPUtils;
 import <string>;
+import <cmath>;
 
 
 export struct s_nethost final {
@@ -44,6 +45,8 @@ export struct s_nethost final {
 	int xmit = 0;			// number of PING packets sent
 	int returned = 0;		// number of ICMP echo replies received
 	unsigned long total = 0;	// total time
+	unsigned long long total_squared = 0; // sum of squared response times
+	unsigned long long jitter_total = 0;  // sum of consecutive response differences
 	int last = 0;				// last time
 	int best = 0;				// best time
 	int worst = 0;			// worst time
@@ -54,6 +57,17 @@ export struct s_nethost final {
 	[[nodiscard]]
 	inline int getAvg() const noexcept {
 		return returned == 0 ? 0 : total / returned;
+	}
+	[[nodiscard]]
+	inline double getJitter() const noexcept {
+		return returned < 2 ? 0.0 : static_cast<double>(jitter_total) / (returned - 1);
+	}
+	[[nodiscard]]
+	inline double getStdDev() const noexcept {
+		if (returned == 0) return 0.0;
+		const auto mean = static_cast<double>(total) / returned;
+		const auto variance = static_cast<double>(total_squared) / returned - mean * mean;
+		return std::sqrt(variance > 0.0 ? variance : 0.0);
 	}
 	[[nodiscard]]
 	auto getName() const -> std::wstring {

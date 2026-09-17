@@ -98,12 +98,11 @@ private:
 	CButton	m_buttonStart;
 	CComboBox m_comboHost;
 	CListCtrl	m_listMTR;
+	CFont		m_mtrFont;
 
 	CStatic	m_staticS;
 	CStatic	m_staticJ;
 
-	CButton	m_buttonExpT;
-	CButton	m_buttonExpH;
 	std::wstring msz_defaulthostname;
 	std::shared_ptr<WinMTRNet>			wmtrnet;
 	std::mutex tracer_mutex;
@@ -124,8 +123,11 @@ private:
 	bool				useIPv4 = true;
 	bool				useIPv6 = true;
 	std::atomic_bool	tracing;
+	int				m_lastAutoSizeRowCount = -1;
+	int				m_pendingAutoSizeRowCount = -1;
 
 	void ClearHistory();
+	void AutoSizeToContent();
 	winrt::Windows::Foundation::IAsyncAction pingThread(std::stop_token token, std::wstring shost);
 	winrt::fire_and_forget stopTrace();
 public:
@@ -156,8 +158,11 @@ protected:
 	afx_msg void OnCHTC() noexcept;
 	afx_msg void OnEXPT() noexcept;
 	afx_msg void OnEXPH() noexcept;
-
-	afx_msg void OnDblclkList(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnResetStats() noexcept;
+	afx_msg void OnScreenshot();
+	afx_msg LRESULT OnPublicNetworkInfo(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnHopNetworkInfo(WPARAM wParam, LPARAM lParam);
+	void LoadPublicNetworkInfo();
 
 	DECLARE_MESSAGE_MAP()
 public:

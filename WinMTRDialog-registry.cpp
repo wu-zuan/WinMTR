@@ -180,11 +180,13 @@ void WinMTRDialog::OnRestart() noexcept
 		sHost.TrimLeft();
 
 		if (sHost.IsEmpty()) {
-			AfxMessageBox(L"No host specified!");
+			AfxMessageBox(L"請輸入要追蹤的主機名稱或 IP 位址。", MB_ICONINFORMATION);
 			m_comboHost.SetFocus();
 			return;
 		}
 		m_listMTR.DeleteAllItems();
+		m_pendingAutoSizeRowCount = -1;
+		m_lastAutoSizeRowCount = -1;
 	}
 
 	if (state == STATES::IDLE) {

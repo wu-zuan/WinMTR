@@ -36,6 +36,7 @@ import <cstring>;
 import <vector>;
 import <iterator>;
 import <mutex>;
+import <algorithm>;
 import WinMTRSNetHost;
 import WinMTRIPUtils;
 import :ClassDef;
@@ -57,6 +58,16 @@ std::vector<s_nethost> WinMTRNet::getCurrentState() const
 }
 
 [[nodiscard]]
+std::vector<std::vector<s_nethost>> WinMTRNet::getCurrentRoutes() const
+{
+	std::unique_lock lock(ghMutex);
+	auto max = GetMax();
+	auto end = std::cbegin(routes);
+	std::advance(end, max);
+	return std::vector<std::vector<s_nethost>>(std::cbegin(routes), end);
+}
+
+[[nodiscard]]
 int WinMTRNet::GetMax() const
 {
 	std::unique_lock lock(ghMutex);
@@ -64,7 +75,10 @@ int WinMTRNet::GetMax() const
 
 	// first match: traced address responds on ping requests, and the address is in the hosts list
 	for (int i = 1; const auto & h : host) {
-		if (h.addr == last_remote_addr) {
+		const auto& paths = routes[i - 1];
+		if (h.addr == last_remote_addr || std::ranges::any_of(paths, [this](const s_nethost& path) {
+			return path.addr == last_remote_addr;
+		})) {
 			max = i;
 			break;
 		}
